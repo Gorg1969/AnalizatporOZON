@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Профи-режим</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            background: #f5f7fa;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            max-width: 560px;
+            width: 100%;
+            background: white;
+            border-radius: 24px;
+            padding: 32px 28px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.08);
+        }
+        h1 { font-size: 24px; font-weight: 700; color: #1a1a2e; margin-bottom: 8px; }
+        .back { 
+            color: #6b7280; 
+            text-decoration: none; 
+            display: inline-block; 
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        .back:hover { color: #6366f1; }
+        textarea {
+            width: 100%;
+            min-height: 200px;
+            padding: 14px 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            font-size: 15px;
+            font-family: inherit;
+            transition: border 0.3s;
+            outline: none;
+            resize: vertical;
+        }
+        textarea:focus { border-color: #6366f1; }
+        .hint { font-size: 13px; color: #6b7280; margin-top: 6px; }
+        button {
+            width: 100%;
+            padding: 16px;
+            background: #f59e0b;
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 17px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+            margin-top: 20px;
+        }
+        button:hover { background: #d97706; }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        .price {
+            text-align: center;
+            font-size: 24px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin: 16px 0;
+        }
+        .price small { font-size: 14px; font-weight: 400; color: #6b7280; }
+        .error { 
+            color: #ef4444; 
+            font-size: 14px; 
+            margin-top: 12px; 
+            display: none;
+            background: #fef2f2;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #fecaca;
+        }
+        .loading { display: none; text-align: center; margin-top: 20px; }
+        .spinner {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            border: 4px solid #e5e7eb;
+            border-top-color: #f59e0b;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .info-box {
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 16px;
+            font-size: 14px;
+            color: #166534;
+        }
+        .info-box strong { display: block; margin-bottom: 4px; }
+        .url-counter {
+            text-align: right;
+            font-size: 13px;
+            color: #6b7280;
+            margin-top: 4px;
+        }
+        .url-counter .count { font-weight: 600; }
+        .url-counter .max { color: #ef4444; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back">← Назад к меню</a>
+        <h1>📊 Профи-режим</h1>
+        <p style="color:#6b7280;margin-bottom:8px;">Анализ до 10 карточек конкурентов одновременно</p>
+        
+        <div class="price">199 ₽ <small>за отчёт</small></div>
+        
+        <form id="proForm">
+            <label for="urls">Ссылки на карточки (по одной на строку)</label>
+            <textarea id="urls" placeholder="https://www.wildberries.ru/catalog/...&#10;https://www.ozon.ru/product/...&#10;https://market.yandex.ru/product/..."></textarea>
+            <div class="url-counter">
+                <span class="count" id="urlCount">0</span> / <span class="max">10</span> ссылок
+            </div>
+            <div class="hint">Поддерживаются: Wildberries, Ozon, Яндекс.Маркет. Максимум 10 ссылок.</div>
+            <div id="error" class="error"></div>
+            <button type="submit" id="analyzeBtn">💳 Оплатить и начать анализ</button>
+        </form>
+        
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p style="margin-top:12px;color:#6b7280;">Выполняется анализ...</p>
+        </div>
+        
+        <div class="info-box">
+            <strong>📌 Что вы получите:</strong>
+            • Сводный Excel-отчёт по всем товарам<br>
+            • Анализ описаний и характеристик<br>
+            • Выявление слабых мест конкурентов<br>
+            • Рекомендации по улучшению карточки
+        </div>
+    </div>
+    
+    <script>
+        // Счётчик ссылок
+        document.getElementById('urls').addEventListener('input', function() {
+            const urls = this.value.split('\n').filter(u => u.trim());
+            const count = document.getElementById('urlCount');
+            count.textContent = urls.length;
+            if (urls.length > 10) {
+                count.style.color = '#ef4444';
+            } else {
+                count.style.color = '#6b7280';
+            }
+        });
+        
+        document.getElementById('proForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const urlsText = document.getElementById('urls').value.trim();
+            const errorEl = document.getElementById('error');
+            const btn = document.getElementById('analyzeBtn');
+            const loading = document.getElementById('loading');
+            
+            errorEl.style.display = 'none';
+            errorEl.textContent = '';
+            
+            if (!urlsText) {
+                errorEl.textContent = '⚠️ Введите хотя бы одну ссылку';
+                errorEl.style.display = 'block';
+                return;
+            }
+            
+            const urls = urlsText.split('\n').filter(u => u.trim());
+            
+            if (urls.length > 10) {
+                errorEl.textContent = '⚠️ Максимум 10 ссылок. Сейчас ' + urls.length;
+                errorEl.style.display = 'block';
+                return;
+            }
+            
+            // Проверка каждой ссылки
+            let hasError = false;
+            for (const url of urls) {
+                if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                    errorEl.textContent = `⚠️ Некорректная ссылка: ${url}`;
+                    errorEl.style.display = 'block';
+                    hasError = true;
+                    break;
+                }
+            }
+            if (hasError) return;
+            
+            btn.disabled = true;
+            btn.textContent = '⏳ Обработка...';
+            loading.style.display = 'block';
+            
+            try {
+                // TODO: реальный запрос на анализ + оплату
+                // Пока эмуляция
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                
+                // В реальном проекте здесь будет оплата через ЮKassa или Stripe
+                // После успешной оплаты — скачивание
+                alert('✅ Анализ завершён! Начинается скачивание отчёта.');
+                window.location.href = '/api/download-pro';
+                
+            } catch (err) {
+                errorEl.textContent = '⚠️ Ошибка. Попробуйте позже.';
+                errorEl.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '💳 Оплатить и начать анализ';
+                loading.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
