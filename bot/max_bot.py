@@ -6,14 +6,13 @@ from obabot.filters import Command
 
 logger = logging.getLogger(__name__)
 
-# Импортируем детектор и парсеры
 from modules.detector import SiteDetector
 from modules.wildberries import WildberriesParser
 from modules.ozon import OzonParser
 
 
 async def start_max_bot(token: str):
-    WEBAPP_URL = os.getenv("WEBAPP_URL", "https://ваш-бот.bothost.tech")
+    WEBAPP_URL = os.getenv("WEBAPP_URL", "https://bot-1788513478-6189-evgeniy-zn.bothost.tech")
     
     bot, dp, router = create_bot(max_token=token)
     
@@ -25,14 +24,12 @@ async def start_max_bot(token: str):
             "/analyze <ссылка> — анализ карточки\n\n"
             "📌 Поддерживаются:\n"
             "• Wildberries\n"
-            "• Ozon\n"
-            "• Яндекс.Маркет (скоро)\n\n"
+            "• Ozon\n\n"
             f"🔗 Или открой веб-сервис:\n{WEBAPP_URL}"
         )
     
     @router.message(Command("analyze"))
     async def analyze_command(message):
-        # Получаем ссылку из команды
         text = message.text
         parts = text.split(maxsplit=1)
         
@@ -45,22 +42,18 @@ async def start_max_bot(token: str):
         
         url = parts[1].strip()
         
-        # Проверяем ссылку
         if not url.startswith(('http://', 'https://')):
             await message.answer("❌ Некорректная ссылка. Убедитесь, что она начинается с http:// или https://")
             return
         
-        # Проверяем безопасность
         if not SiteDetector.is_safe(url):
             await message.answer("❌ Ссылка не распознана или является потенциально опасной")
             return
         
-        # Определяем сайт
         site = SiteDetector.detect(url)
         await message.answer(f"🔍 Определён маркетплейс: **{site}**\n⏳ Начинаю анализ...")
         
         try:
-            # Выполняем парсинг в зависимости от сайта
             async with aiohttp.ClientSession() as session:
                 if site == 'wildberries':
                     parser = WildberriesParser(session)
@@ -98,9 +91,11 @@ async def start_max_bot(token: str):
                     response += "📋 **Характеристики:**\n"
                     for key, value in list(chars.items())[:5]:
                         response += f"• {key}: {value}\n"
+                    if len(chars) > 5:
+                        response += f"• ... и ещё {len(chars) - 5} характеристик\n"
                 
-                # Добавляем ссылку на полный отчёт
-                response += f"\n🔗 Полный отчёт в Excel будет доступен в веб-версии"
+                # Добавляем ссылку на скачивание
+                response += f"\n📥 Скачать отчёт в Excel:\n{WEBAPP_URL}/download/report"
                 
                 await message.answer(response)
                 
