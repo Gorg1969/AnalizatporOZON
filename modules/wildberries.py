@@ -27,12 +27,22 @@ class WildberriesParser:
             product_id = product_id.group(1)
             logger.info(f"Парсинг Wildberries: ID {product_id}")
             
-            # Используем API Wildberries
-            api_url = f"https://card.wb.ru/cards/v1/detail?appType=1&curr=rub&dest=-1257786&spp=30&nm={product_id}"
+            # Используем другой API-эндпоинт Wildberries
+            # Этот эндпоинт менее защищён и работает без токена
+            api_url = f"https://card.wb.ru/cards/v2/detail?appType=1&curr=rub&dest=-1257786&spp=30&nm={product_id}"
             
+            # Расширенные заголовки (имитируем браузер)
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'application/json'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json, text/plain, */*',
+                'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Sec-Fetch-Dest': 'empty',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Site': 'same-site',
+                'Referer': 'https://www.wildberries.ru/',
+                'Origin': 'https://www.wildberries.ru',
             }
             
             async with self.session.get(api_url, headers=headers, timeout=self.timeout) as response:
@@ -64,7 +74,7 @@ class WildberriesParser:
                         if name and value:
                             characteristics[name] = value
                 
-                # Отзывы
+                # Отзывы (через другой API)
                 reviews_count = 0
                 try:
                     reviews_url = f"https://feedbacks.wb.ru/api/v1/feedbacks/summary?nmId={product_id}"
