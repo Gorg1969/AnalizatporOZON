@@ -1,23 +1,28 @@
 import os
 import logging
-from fastapi import FastAPI, Request, HTTPException
+import uuid
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import uuid
-import json
 from pathlib import Path
+import asyncio
+
+# Импортируем наши модули
+from modules.detector import SiteDetector
+from modules.reporter import ReportGenerator
+from modules.security import SecurityManager
 
 logger = logging.getLogger(__name__)
 
-# Создаём папку для статики если её нет
+# Создаём папку для статики
 static_dir = Path(__file__).parent / "static"
 static_dir.mkdir(exist_ok=True)
 
 app = FastAPI(title="Market Analyzer", version="1.0.0")
 
-# CORS для безопасности
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,20 +34,76 @@ app.add_middleware(
 # Монтируем статику
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-
-# ============================================
-# ВРЕМЕННОЕ ХРАНИЛИЩЕ (в реальном проекте — Redis или БД)
-# ============================================
-
+# Хранилище сессий (в реальном проекте — Redis)
 sessions = {}
+security = SecurityManager()
 
 
 # ============================================
-# МОДЕЛИ ДАННЫХ
+# МОДЕЛИ
 # ============================================
 
 class AnalyzeRequest(BaseModel):
     url: str
+
+
+# ============================================
+# ФУНКЦИЯ АНАЛИЗА
+# ============================================
+
+async def analyze_product(url: str):
+    """Основная функция анализа товара"""
+    # 1. Проверка безопасности
+    if not SiteDetector.is_safe(url):
+        return {"error": "Ссылка не распознана или является потенциально опасной"}
+    
+    # 2. Определяем сайт
+    site = SiteDetector.detect(url)
+    logger.info(f"Определён сайт: {site} для {url}")
+    
+    if site == 'unknown':
+        return {"error": "Не удалось определить маркетплейс. Поддерживаются: Wildberries, Ozon, Яндекс.Маркет"}
+    
+    # 3. Извлекаем ID товара
+    product_id = SiteDetector.extract_product_id(url, site)
+    if not product_id:
+        return {"error": "Не удалось извлечь ID товара из ссылки"}
+    
+    # 4. Парсим в зависимости от сайта
+    try:
+        if site == 'wildberries':
+            from modules.wildberries import WildberriesParser
+            import aiohttp
+            
+            async with aiohttp.ClientSession() as session:
+                parser = WildberriesParser(session)
+                result = await parser.parse(url)
+                
+        elif site == 'ozon':
+            from modules.ozon import OzonParser
+            import aiohttp
+            
+            async with aiohttp.ClientSession() as session:
+                parser = OzonParser(session)
+                result = await parser.parse(url)
+                
+        else:
+            return {"error": f"Парсер для {site} пока в разработке"}
+        
+        if result.get('error'):
+            return result
+            
+        # 5. Добавляем информацию о платформе
+        result['platform'] = site
+        
+        # 6. Генерируем слабые места
+        result['weak_spots'] = ReportGenerator.generate_weak_spots_report(result)
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Ошибка парсинга: {e}")
+        return {"error": f"Ошибка при парсинге: {str(e)}"}
 
 
 # ============================================
@@ -51,7 +112,6 @@ class AnalyzeRequest(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    """Главная страница с меню"""
     html_file = static_dir / "index.html"
     if html_file.exists():
         return HTMLResponse(html_file.read_text(encoding="utf-8"))
@@ -60,7 +120,6 @@ async def index():
 
 @app.get("/single", response_class=HTMLResponse)
 async def single_mode():
-    """Страница разового режима"""
     html_file = static_dir / "single.html"
     if html_file.exists():
         return HTMLResponse(html_file.read_text(encoding="utf-8"))
@@ -69,7 +128,6 @@ async def single_mode():
 
 @app.get("/pro", response_class=HTMLResponse)
 async def pro_mode():
-    """Страница профи-режима"""
     html_file = static_dir / "pro.html"
     if html_file.exists():
         return HTMLResponse(html_file.read_text(encoding="utf-8"))
@@ -83,61 +141,50 @@ async def pro_mode():
 @app.post("/api/analyze")
 async def analyze(request: AnalyzeRequest):
     """Анализ одной ссылки"""
-    url = request.url
+    url = request.url.strip()
     
-    # Простая валидация
-    if not url.startswith(('http://', 'https://')):
+    # Проверка URL
+    if not SiteDetector.is_valid_url(url):
         return JSONResponse(
             status_code=400,
-            content={"error": "Некорректный URL. Ссылка должна начинаться с http:// или https://"}
+            content={"error": "Некорректный URL. Проверьте ссылку."}
         )
     
-    # Проверка на опасные ссылки
-    dangerous = ['.exe', '.zip', '.rar', 'javascript:', 'data:', 'file:']
-    for d in dangerous:
-        if d in url.lower():
-            return JSONResponse(
-                status_code=400,
-                content={"error": f"Обнаружен потенциально опасный URL (содержит {d})"}
-            )
-    
-    # Генерируем ID сессии
-    session_id = str(uuid.uuid4())
-    
-    # Здесь будет реальный анализ (пока заглушка)
-    # Импортируем парсеры
-    try:
-        from modules.detector import SiteDetector
-        
-        site = SiteDetector.detect(url)
-        logger.info(f"Определён сайт: {site} для {url}")
-        
-        # TODO: реальный парсинг
-        
-        sessions[session_id] = {
-            "url": url,
-            "site": site,
-            "status": "completed",
-            "data": {
-                "name": "Пример товара",
-                "brand": "Пример бренда",
-                "price": 1000,
-                "rating": 4.5,
-                "platform": site,
-                "description": "Это пример описания товара. В реальном режиме здесь будут данные с маркетплейса."
-            }
-        }
-    except Exception as e:
-        logger.error(f"Ошибка анализа: {e}")
+    # Проверка на опасность
+    if not SiteDetector.is_safe(url):
         return JSONResponse(
-            status_code=500,
-            content={"error": f"Ошибка при анализе: {str(e)}"}
+            status_code=400,
+            content={"error": "Ссылка не распознана или является потенциально опасной"}
         )
+    
+    # Выполняем анализ
+    result = await analyze_product(url)
+    
+    if result.get('error'):
+        return JSONResponse(
+            status_code=400,
+            content={"error": result['error']}
+        )
+    
+    # Сохраняем результат
+    session_id = str(uuid.uuid4())
+    sessions[session_id] = {
+        "url": url,
+        "data": result,
+        "created_at": str(uuid.uuid4())
+    }
     
     return {
         "success": True,
         "session_id": session_id,
-        "message": "Анализ завершён"
+        "message": "Анализ завершён",
+        "preview": {
+            "name": result.get('name', ''),
+            "brand": result.get('brand', ''),
+            "price": result.get('price', ''),
+            "rating": result.get('rating', ''),
+            "weak_spots": result.get('weak_spots', '')
+        }
     }
 
 
@@ -148,8 +195,6 @@ async def download_report(session_id: str):
         raise HTTPException(status_code=404, detail="Сессия не найдена")
     
     try:
-        from modules.reporter import ReportGenerator
-        
         data = sessions[session_id]["data"]
         output = ReportGenerator.generate_single_report(data)
         
@@ -166,10 +211,9 @@ async def download_report(session_id: str):
 @app.get("/api/download-pro")
 async def download_pro_report():
     """Скачивание отчёта для профи-режима (заглушка)"""
+    # В реальном проекте здесь будет генерация отчёта из нескольких товаров
     try:
-        from modules.reporter import ReportGenerator
-        
-        # Заглушка с несколькими товарами
+        # Заглушка
         data_list = [
             {"name": "Товар 1", "brand": "Brand A", "price": 1000, "rating": 4.5, "platform": "wildberries"},
             {"name": "Товар 2", "brand": "Brand B", "price": 2000, "rating": 4.2, "platform": "ozon"},
