@@ -228,6 +228,43 @@ async def download_pro_report():
         logger.error(f"Ошибка генерации отчёта: {e}")
         raise HTTPException(status_code=500, detail=f"Ошибка генерации: {str(e)}")
 
+# ============================================
+# ПРОСТОЙ МАРШРУТ ДЛЯ СКАЧИВАНИЯ ОТЧЁТА
+# ============================================
+
+@app.get("/download/report")
+async def download_report_simple():
+    """
+    Простой маршрут для скачивания отчёта
+    (заглушка, возвращает тестовый Excel файл)
+    """
+    try:
+        from modules.reporter import ReportGenerator
+        
+        # Создаём тестовые данные
+        test_data = {
+            'name': 'Тестовый товар',
+            'brand': 'ТестБренд',
+            'price': 1499,
+            'rating': 4.7,
+            'reviews_count': 125,
+            'platform': 'wildberries',
+            'description': 'Это тестовое описание товара для проверки генерации отчёта.'
+        }
+        
+        output = ReportGenerator.generate_single_report(test_data)
+        
+        return FileResponse(
+            path=output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename="report.xlsx"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка генерации отчёта: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Ошибка: {str(e)}"}
+        )
 
 # ============================================
 # ЗАПУСК (для локальной разработки)
