@@ -1,23 +1,18 @@
-import json
 import re
 import logging
-from typing import Dict, Optional
-import aiohttp
 import asyncio
+from typing import Dict
+from playwright.async_api import async_playwright, Browser, Page
 
 logger = logging.getLogger(__name__)
 
 class WildberriesParser:
-    """Парсер карточек Wildberries через публичное API"""
-    
-    def __init__(self, session: aiohttp.ClientSession):
-        self.session = session
-        self.timeout = aiohttp.ClientTimeout(total=30)
+    """Парсер карточек Wildberries через Playwright с маскировкой"""
     
     async def parse(self, url: str) -> Dict:
-        """Парсит карточку товара на Wildberries"""
+        """Парсит карточку товара используя Playwright"""
         try:
-            # Извлекаем ID товара из URL
+            # Извлекаем ID товара
             product_id = re.search(r'catalog/(\d+)/', url)
             if not product_id:
                 product_id = re.search(r'/product/(\d+)', url)
@@ -25,148 +20,230 @@ class WildberriesParser:
                 return {'error': 'Неверный формат ссылки Wildberries'}
             
             product_id = product_id.group(1)
-            logger.info(f"Парсинг Wildberries: ID {product_id}")
+            logger.info(f"Парсинг Wildberries через Playwright: ID {product_id}")
             
-            # === ИСПОЛЬЗУЕМ ПУБЛИЧНОЕ API (без токена) ===
-            # Пробуем несколько эндпоинтов
-            
-            # 1. Прямой запрос к публичному API Wildberries
-            api_urls = [
-                f"https://public-api.wildberries.ru/api/v1/product/{product_id}",
-                f"https://content-api.wildberries.ru/v1/product/{product_id}",
-                f"https://wbx.ru/api/v1/product/{product_id}",
-            ]
-            
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'application/json',
-                'Accept-Language': 'ru-RU,ru;q=0.9',
-            }
-            
-            data = None
-            for api_url in api_urls:
-                try:
-                    async with self.session.get(api_url, headers=headers, timeout=self.timeout) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            logger.info(f"Успешный ответ от {api_url}")
-                            break
-                        else:
-                            logger.warning(f"API {api_url} вернул статус {response.status}")
-                except Exception as e:
-                    logger.warning(f"Ошибка при запросе к {api_url}: {e}")
-                    continue
-            
-            if not data:
-                # Если API не работают, пробуем парсить через веб
-                return await self._parse_via_web(url, product_id)
-            
-            # Извлекаем данные из ответа
-            return await self._extract_product_data(data, product_id)
-                    
-        except aiohttp.ClientError as e:
-            logger.error(f"Ошибка сети: {e}")
-            return {'error': f'Ошибка сети: {str(e)}'}
+            async with async_playwright() as p:
+                # Запускаем браузер с маскировкой
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=[
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-dev-shm-usage',
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox'
+                    ]
+                )
+                
+                # Создаем контекст с реалистичными настройками
+                context = await browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    locale='ru-RU',
+                    timezone_id='Europe/Moscow',
+                    extra_http_headers={
+                        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
+                    }
+                )
+                
+                # Создаем страницу
+                page = await context.new_page()
+                
+                # Применяем маскировку (stealth-режим)
+                await self._apply_stealth(page)
+                
+                # Переходим на страницу товара
+                await page.goto(url, wait_until='networkidle', timeout=30000)
+                
+                # Имитация человеческого поведения
+                await page.mouse.move(100, 100)
+                await asyncio.sleep(1.5)
+                await page.mouse.move(200, 200)
+                await asyncio.sleep(0.5)
+                
+                # Ждем загрузки основных элементов
+                await page.wait_for_selector('[class*="product"], [class*="Product"], .product-page', timeout=10000)
+                
+                # Извлекаем данные
+                result = await self._extract_data(page)
+                
+                # Закрываем браузер
+                await browser.close()
+                
+                if result:
+                    result['platform'] = 'wildberries'
+                    return result
+                else:
+                    return {'error': 'Не удалось извлечь данные со страницы'}
+                
         except Exception as e:
-            logger.error(f"Ошибка: {e}")
+            logger.error(f"Ошибка парсинга через Playwright: {e}")
             return {'error': f'Ошибка парсинга: {str(e)}'}
     
-    async def _extract_product_data(self, data: Dict, product_id: str) -> Dict:
-        """Извлекает данные из API-ответа"""
+    async def _apply_stealth(self, page: Page):
+        """Применяет маскировку для обхода антибот-систем"""
+        await page.add_init_script("""
+            // Удаляем признаки автоматизации
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+            
+            // Добавляем реалистичные плагины
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5]
+            });
+            
+            // Устанавливаем язык
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['ru-RU', 'ru', 'en-US', 'en']
+            });
+            
+            // Маскировка WebGL
+            const getParameter = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                if (parameter === 37445) {
+                    return 'Intel Inc.';
+                }
+                if (parameter === 37446) {
+                    return 'Intel Iris OpenGL Engine';
+                }
+                return getParameter(parameter);
+            };
+        """)
+    
+    async def _extract_data(self, page: Page) -> Dict:
+        """Извлекает данные с загруженной страницы"""
         try:
-            # Пробуем разные структуры ответа
-            product = data.get('data', {})
-            if not product:
-                product = data
+            # Извлекаем название
+            name = await page.evaluate("""
+                () => {
+                    const selectors = [
+                        'h1[class*="product"]',
+                        '[class*="product-name"]',
+                        '[class*="ProductName"]',
+                        '[itemprop="name"]'
+                    ];
+                    for (const selector of selectors) {
+                        const el = document.querySelector(selector);
+                        if (el) return el.textContent.trim();
+                    }
+                    return '';
+                }
+            """)
             
-            name = product.get('name', '')
-            brand = product.get('brand', '') or product.get('vendor', '')
-            price = product.get('price', product.get('priceU', 0))
+            # Извлекаем бренд
+            brand = await page.evaluate("""
+                () => {
+                    const selectors = [
+                        '[class*="brand"]',
+                        '[class*="Brand"]',
+                        '[itemprop="brand"]'
+                    ];
+                    for (const selector of selectors) {
+                        const el = document.querySelector(selector);
+                        if (el) return el.textContent.trim();
+                    }
+                    // Ищем в JSON-LD
+                    const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+                    for (const script of scripts) {
+                        try {
+                            const data = JSON.parse(script.textContent);
+                            if (data.brand) return data.brand.name || data.brand;
+                        } catch(e) {}
+                    }
+                    return '';
+                }
+            """)
             
-            # Цена может быть в копейках
-            if price and isinstance(price, (int, float)) and price > 1000:
-                price = price / 100
+            # Извлекаем цену
+            price = await page.evaluate("""
+                () => {
+                    const selectors = [
+                        '[class*="price"]',
+                        '[class*="Price"]',
+                        '[itemprop="price"]',
+                        '[class*="final-price"]'
+                    ];
+                    for (const selector of selectors) {
+                        const el = document.querySelector(selector);
+                        if (el) {
+                            const text = el.textContent.replace(/[^\\d.]/g, '');
+                            const num = parseFloat(text);
+                            if (!isNaN(num) && num > 0) return num;
+                        }
+                    }
+                    return null;
+                }
+            """)
             
-            # Описание
-            description = product.get('description', '')
-            if not description:
-                description = product.get('text', '')
+            # Извлекаем рейтинг
+            rating = await page.evaluate("""
+                () => {
+                    const selectors = [
+                        '[class*="rating"]',
+                        '[class*="Rating"]',
+                        '[itemprop="ratingValue"]'
+                    ];
+                    for (const selector of selectors) {
+                        const el = document.querySelector(selector);
+                        if (el) {
+                            const text = el.textContent.replace(',', '.');
+                            const num = parseFloat(text);
+                            if (!isNaN(num)) return num;
+                        }
+                    }
+                    return 0;
+                }
+            """)
             
-            # Характеристики
-            characteristics = product.get('characteristics', {})
-            if not characteristics:
-                characteristics = product.get('params', {})
-                if isinstance(characteristics, list):
-                    chars_dict = {}
-                    for item in characteristics:
-                        name_char = item.get('name', '')
-                        value_char = item.get('value', '')
-                        if name_char and value_char:
-                            chars_dict[name_char] = value_char
-                    characteristics = chars_dict
+            # Извлекаем описание
+            description = await page.evaluate("""
+                () => {
+                    const selectors = [
+                        '[class*="description"]',
+                        '[class*="Description"]',
+                        '[itemprop="description"]',
+                        '.product-description'
+                    ];
+                    for (const selector of selectors) {
+                        const el = document.querySelector(selector);
+                        if (el) return el.textContent.trim();
+                    }
+                    return '';
+                }
+            """)
             
-            # Рейтинг и отзывы
-            rating = product.get('rating', 0)
-            reviews_count = product.get('reviewsCount', 0)
-            
-            if rating > 10:
-                rating = rating / 10
+            # Извлекаем характеристики
+            characteristics = await page.evaluate("""
+                () => {
+                    const chars = {};
+                    const containers = document.querySelectorAll('[class*="characteristic"], [class*="Characteristic"], [class*="params"]');
+                    for (const container of containers) {
+                        const items = container.querySelectorAll('li, div, tr');
+                        for (const item of items) {
+                            const text = item.textContent.trim();
+                            if (text.includes(':')) {
+                                const [key, ...valueParts] = text.split(':');
+                                chars[key.trim()] = valueParts.join(':').trim();
+                            } else if (text.includes('—')) {
+                                const [key, ...valueParts] = text.split('—');
+                                chars[key.trim()] = valueParts.join('—').trim();
+                            }
+                        }
+                    }
+                    return chars;
+                }
+            """)
             
             return {
                 'name': name or 'Название не указано',
                 'brand': brand or 'Не указан',
-                'price': price if price else None,
-                'rating': rating if rating > 0 else 0,
-                'reviews_count': reviews_count if reviews_count > 0 else 0,
+                'price': price,
+                'rating': rating,
+                'reviews_count': 0,  # Для отзывов нужен отдельный запрос
                 'description': description[:5000] if description else '',
-                'characteristics': characteristics,
-                'platform': 'wildberries'
+                'characteristics': characteristics
             }
+            
         except Exception as e:
             logger.error(f"Ошибка извлечения данных: {e}")
-            return {'error': f'Ошибка извлечения данных: {str(e)}'}
-    
-    async def _parse_via_web(self, url: str, product_id: str) -> Dict:
-        """Запасной способ: парсинг через веб-страницу"""
-        try:
-            # Используем другой подход — запрос к мобильной версии
-            mobile_url = f"https://m.wildberries.ru/product/{product_id}"
-            
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'ru-RU,ru;q=0.9',
-            }
-            
-            async with self.session.get(mobile_url, headers=headers, timeout=self.timeout) as response:
-                if response.status != 200:
-                    return {'error': f'Не удалось загрузить страницу (статус: {response.status})'}
-                
-                html = await response.text()
-                
-                # Пытаемся найти данные в JSON внутри HTML
-                import re
-                json_pattern = r'<script type="application/ld\+json">(.*?)</script>'
-                matches = re.findall(json_pattern, html, re.DOTALL)
-                
-                for match in matches:
-                    try:
-                        data = json.loads(match)
-                        if data.get('@type') == 'Product':
-                            return {
-                                'name': data.get('name', 'Название не указано'),
-                                'brand': data.get('brand', {}).get('name', 'Не указан') if isinstance(data.get('brand'), dict) else 'Не указан',
-                                'price': data.get('offers', {}).get('price', None),
-                                'rating': 0,
-                                'reviews_count': 0,
-                                'description': data.get('description', '')[:5000],
-                                'characteristics': {},
-                                'platform': 'wildberries'
-                            }
-                    except:
-                        pass
-                
-                return {'error': 'Не удалось извлечь данные с мобильной версии'}
-                
-        except Exception as e:
-            return {'error': f'Ошибка веб-парсинга: {str(e)}'}
+            return None
