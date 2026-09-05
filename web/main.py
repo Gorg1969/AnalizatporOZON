@@ -1,4 +1,3 @@
-import os
 import logging
 import uuid
 from fastapi import FastAPI, HTTPException
