@@ -21,3 +21,6 @@ loguru==0.7.2
 
 # Для MAX бота
 obabot
+
+playwright==1.40.0
+playwright-stealth==1.0.6
