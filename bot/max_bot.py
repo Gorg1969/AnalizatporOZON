@@ -44,11 +44,7 @@ async def start_max_bot(token: str):
         url = parts[1].strip()
         
         if not url.startswith(('http://', 'https://')):
-            await message.answer("❌ Некорректная ссылка. Убедитесь, что она начинается с http:// или https://")
-            return
-        
-        if not SiteDetector.is_safe(url):
-            await message.answer("❌ Ссылка не распознана или является потенциально опасной")
+            await message.answer("❌ Некорректная ссылка")
             return
         
         site = SiteDetector.detect(url)
@@ -70,55 +66,31 @@ async def start_max_bot(token: str):
                     await message.answer(f"❌ Ошибка: {result['error']}")
                     return
                 
-                # Формируем красивый ответ
+                # Формируем ответ
                 response = f"📊 **Результат анализа**\n\n"
                 response += f"📌 **Название:** {result.get('name', 'Не указано')}\n"
                 response += f"🏷️ **Бренд:** {result.get('brand', 'Не указан')}\n"
+                response += f"💰 **Цена:** {result.get('price', 'Не указана')} ₽\n" if result.get('price') else f"💰 **Цена:** Не указана\n"
+                response += f"⭐ **Рейтинг:** {result.get('rating', 'Нет')}\n"
+                response += f"💬 **Отзывов:** {result.get('reviews_count', 'Нет')}\n\n"
                 
-                price = result.get('price')
-                if price:
-                    response += f"💰 **Цена:** {price} ₽\n"
-                else:
-                    response += f"💰 **Цена:** Не указана\n"
-                
-                rating = result.get('rating', 0)
-                if rating > 0:
-                    response += f"⭐ **Рейтинг:** {rating}/5\n"
-                else:
-                    response += f"⭐ **Рейтинг:** Нет\n"
-                
-                reviews = result.get('reviews_count', 0)
-                if reviews > 0:
-                    response += f"💬 **Отзывов:** {reviews}\n"
-                else:
-                    response += f"💬 **Отзывов:** Нет\n"
-                
-                response += f"📱 **Платформа:** {result.get('platform', 'Неизвестно')}\n\n"
-                
-                # Добавляем описание (сокращённо)
-                desc = result.get('description', '')
+                desc = result.get('description', '')[:300] + '...' if result.get('description') else ''
                 if desc:
-                    if len(desc) > 300:
-                        desc = desc[:300] + '...'
                     response += f"📝 **Описание:**\n{desc}\n\n"
                 
-                # Добавляем характеристики
                 chars = result.get('characteristics', {})
                 if chars:
                     response += "📋 **Характеристики:**\n"
                     for key, value in list(chars.items())[:5]:
                         response += f"• {key}: {value}\n"
-                    if len(chars) > 5:
-                        response += f"• ... и ещё {len(chars) - 5} характеристик\n"
                 
-                # Добавляем ссылку на скачивание
-                response += f"\n📥 Скачать отчёт в Excel:\n{WEBAPP_URL}/download/report"
+                response += f"\n📥 Полный отчёт: {WEBAPP_URL}/download/report"
                 
                 await message.answer(response)
                 
         except Exception as e:
-            logger.error(f"Ошибка при анализе: {e}")
-            await message.answer(f"❌ Произошла ошибка: {str(e)}\n\nПожалуйста, попробуйте другую ссылку или повторите позже.")
+            logger.error(f"Ошибка: {e}")
+            await message.answer(f"❌ Ошибка: {str(e)}")
     
-    logger.info("🤖 MAX бот запущен и готов к работе")
+    logger.info("🤖 MAX бот запущен")
     await dp.start_polling(bot)
