@@ -2,15 +2,13 @@ import json
 import re
 import logging
 from typing import Dict, Optional
-from bs4 import BeautifulSoup
 import aiohttp
-import random
-import time
+import asyncio
 
 logger = logging.getLogger(__name__)
 
 class WildberriesParser:
-    """Парсер карточек Wildberries с обходом антибота"""
+    """Парсер карточек Wildberries через публичное API"""
     
     def __init__(self, session: aiohttp.ClientSession):
         self.session = session
@@ -29,41 +27,42 @@ class WildberriesParser:
             product_id = product_id.group(1)
             logger.info(f"Парсинг Wildberries: ID {product_id}")
             
-            # === ПЕРВЫЙ СПОСОБ: API карточек (с правильными заголовками) ===
-            api_url = f"https://card.wb.ru/cards/v2/detail?appType=1&curr=rub&dest=-1257786&spp=30&nm={product_id}"
+            # === ИСПОЛЬЗУЕМ ПУБЛИЧНОЕ API (без токена) ===
+            # Пробуем несколько эндпоинтов
             
-            # Полный набор заголовков как у реального браузера
+            # 1. Прямой запрос к публичному API Wildberries
+            api_urls = [
+                f"https://public-api.wildberries.ru/api/v1/product/{product_id}",
+                f"https://content-api.wildberries.ru/v1/product/{product_id}",
+                f"https://wbx.ru/api/v1/product/{product_id}",
+            ]
+            
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/json, text/plain, */*',
-                'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Sec-Fetch-Dest': 'empty',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Site': 'same-site',
-                'Referer': 'https://www.wildberries.ru/',
-                'Origin': 'https://www.wildberries.ru',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json',
+                'Accept-Language': 'ru-RU,ru;q=0.9',
             }
             
-            # Добавляем небольшую задержку для имитации человека
-            await asyncio.sleep(random.uniform(0.5, 1.5))
+            data = None
+            for api_url in api_urls:
+                try:
+                    async with self.session.get(api_url, headers=headers, timeout=self.timeout) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            logger.info(f"Успешный ответ от {api_url}")
+                            break
+                        else:
+                            logger.warning(f"API {api_url} вернул статус {response.status}")
+                except Exception as e:
+                    logger.warning(f"Ошибка при запросе к {api_url}: {e}")
+                    continue
             
-            async with self.session.get(api_url, headers=headers, timeout=self.timeout) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    products = data.get('data', {}).get('products', [])
-                    
-                    if products:
-                        product = products[0]
-                        return await self._extract_product_data(product, product_id)
-                    else:
-                        logger.warning(f"Товар {product_id} не найден через API")
-                        # Пробуем второй способ
-                        return await self._parse_via_web(url, product_id)
-                else:
-                    logger.warning(f"API вернул статус {response.status}, пробуем веб-парсинг")
-                    return await self._parse_via_web(url, product_id)
+            if not data:
+                # Если API не работают, пробуем парсить через веб
+                return await self._parse_via_web(url, product_id)
+            
+            # Извлекаем данные из ответа
+            return await self._extract_product_data(data, product_id)
                     
         except aiohttp.ClientError as e:
             logger.error(f"Ошибка сети: {e}")
@@ -72,49 +71,54 @@ class WildberriesParser:
             logger.error(f"Ошибка: {e}")
             return {'error': f'Ошибка парсинга: {str(e)}'}
     
-    async def _extract_product_data(self, product: Dict, product_id: str) -> Dict:
+    async def _extract_product_data(self, data: Dict, product_id: str) -> Dict:
         """Извлекает данные из API-ответа"""
         try:
+            # Пробуем разные структуры ответа
+            product = data.get('data', {})
+            if not product:
+                product = data
+            
+            name = product.get('name', '')
+            brand = product.get('brand', '') or product.get('vendor', '')
+            price = product.get('price', product.get('priceU', 0))
+            
+            # Цена может быть в копейках
+            if price and isinstance(price, (int, float)) and price > 1000:
+                price = price / 100
+            
             # Описание
-            description_html = product.get('description', '')
-            if description_html:
-                soup = BeautifulSoup(description_html, 'html.parser')
-                description_text = soup.get_text(strip=True)
-            else:
-                description_text = ''
+            description = product.get('description', '')
+            if not description:
+                description = product.get('text', '')
             
             # Характеристики
-            characteristics = {}
-            if 'characteristics' in product:
-                for char in product.get('characteristics', []):
-                    name = char.get('name', '')
-                    value = char.get('value', '')
-                    if name and value:
-                        characteristics[name] = value
+            characteristics = product.get('characteristics', {})
+            if not characteristics:
+                characteristics = product.get('params', {})
+                if isinstance(characteristics, list):
+                    chars_dict = {}
+                    for item in characteristics:
+                        name_char = item.get('name', '')
+                        value_char = item.get('value', '')
+                        if name_char and value_char:
+                            chars_dict[name_char] = value_char
+                    characteristics = chars_dict
             
-            # Отзывы
-            reviews_count = 0
-            try:
-                reviews_headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Accept': 'application/json',
-                    'Referer': 'https://www.wildberries.ru/'
-                }
-                reviews_url = f"https://feedbacks.wb.ru/api/v1/feedbacks/summary?nmId={product_id}"
-                async with self.session.get(reviews_url, headers=reviews_headers, timeout=self.timeout) as rev_response:
-                    if rev_response.status == 200:
-                        rev_data = await rev_response.json()
-                        reviews_count = rev_data.get('data', {}).get('count', 0)
-            except:
-                pass
+            # Рейтинг и отзывы
+            rating = product.get('rating', 0)
+            reviews_count = product.get('reviewsCount', 0)
+            
+            if rating > 10:
+                rating = rating / 10
             
             return {
-                'name': product.get('name', 'Название не указано'),
-                'brand': product.get('brand', ''),
-                'price': product.get('priceU', 0) / 100 if product.get('priceU') else None,
-                'rating': product.get('rating', 0),
-                'reviews_count': reviews_count,
-                'description': description_text[:5000],
+                'name': name or 'Название не указано',
+                'brand': brand or 'Не указан',
+                'price': price if price else None,
+                'rating': rating if rating > 0 else 0,
+                'reviews_count': reviews_count if reviews_count > 0 else 0,
+                'description': description[:5000] if description else '',
                 'characteristics': characteristics,
                 'platform': 'wildberries'
             }
@@ -123,146 +127,46 @@ class WildberriesParser:
             return {'error': f'Ошибка извлечения данных: {str(e)}'}
     
     async def _parse_via_web(self, url: str, product_id: str) -> Dict:
-        """
-        Запасной способ: парсинг через веб-страницу
-        """
+        """Запасной способ: парсинг через веб-страницу"""
         try:
+            # Используем другой подход — запрос к мобильной версии
+            mobile_url = f"https://m.wildberries.ru/product/{product_id}"
+            
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Cache-Control': 'max-age=0',
-                'Upgrade-Insecure-Requests': '1'
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'ru-RU,ru;q=0.9',
             }
             
-            async with self.session.get(url, headers=headers, timeout=self.timeout) as response:
+            async with self.session.get(mobile_url, headers=headers, timeout=self.timeout) as response:
                 if response.status != 200:
                     return {'error': f'Не удалось загрузить страницу (статус: {response.status})'}
                 
                 html = await response.text()
-                soup = BeautifulSoup(html, 'html.parser')
                 
-                # Извлекаем данные из JSON-LD
-                name = self._extract_name_from_html(soup)
-                brand = self._extract_brand_from_html(soup)
-                price = self._extract_price_from_html(soup)
+                # Пытаемся найти данные в JSON внутри HTML
+                import re
+                json_pattern = r'<script type="application/ld\+json">(.*?)</script>'
+                matches = re.findall(json_pattern, html, re.DOTALL)
                 
-                return {
-                    'name': name or 'Название не указано',
-                    'brand': brand or 'Не указан',
-                    'price': price,
-                    'rating': 0,
-                    'reviews_count': 0,
-                    'description': self._extract_description_from_html(soup),
-                    'characteristics': self._extract_chars_from_html(soup),
-                    'platform': 'wildberries'
-                }
+                for match in matches:
+                    try:
+                        data = json.loads(match)
+                        if data.get('@type') == 'Product':
+                            return {
+                                'name': data.get('name', 'Название не указано'),
+                                'brand': data.get('brand', {}).get('name', 'Не указан') if isinstance(data.get('brand'), dict) else 'Не указан',
+                                'price': data.get('offers', {}).get('price', None),
+                                'rating': 0,
+                                'reviews_count': 0,
+                                'description': data.get('description', '')[:5000],
+                                'characteristics': {},
+                                'platform': 'wildberries'
+                            }
+                    except:
+                        pass
+                
+                return {'error': 'Не удалось извлечь данные с мобильной версии'}
+                
         except Exception as e:
             return {'error': f'Ошибка веб-парсинга: {str(e)}'}
-    
-    def _extract_name_from_html(self, soup: BeautifulSoup) -> str:
-        """Извлекает название из HTML"""
-        # Пробуем JSON-LD
-        for script in soup.find_all('script', type='application/ld+json'):
-            try:
-                data = json.loads(script.string)
-                if data.get('@type') == 'Product':
-                    return data.get('name', '')
-            except:
-                pass
-        
-        # Пробуем заголовок
-        title = soup.find('h1')
-        if title:
-            return title.get_text(strip=True)
-        
-        return ''
-    
-    def _extract_brand_from_html(self, soup: BeautifulSoup) -> str:
-        """Извлекает бренд из HTML"""
-        for script in soup.find_all('script', type='application/ld+json'):
-            try:
-                data = json.loads(script.string)
-                if data.get('@type') == 'Product':
-                    brand_data = data.get('brand', {})
-                    if isinstance(brand_data, dict):
-                        return brand_data.get('name', '')
-                    return str(brand_data)
-            except:
-                pass
-        
-        # Ищем на странице
-        brand_selectors = ['[class*="brand"]', '[class*="Brand"]', '[class*="vendor"]']
-        for selector in brand_selectors:
-            element = soup.select_one(selector)
-            if element:
-                return element.get_text(strip=True)
-        
-        return ''
-    
-    def _extract_price_from_html(self, soup: BeautifulSoup) -> float:
-        """Извлекает цену из HTML"""
-        for script in soup.find_all('script', type='application/ld+json'):
-            try:
-                data = json.loads(script.string)
-                if data.get('@type') == 'Product':
-                    offers = data.get('offers', {})
-                    price = offers.get('price')
-                    if price:
-                        return float(price)
-            except:
-                pass
-        
-        # Ищем на странице
-        price_selectors = ['[class*="price"]', '[class*="Price"]', '[itemprop="price"]']
-        for selector in price_selectors:
-            element = soup.select_one(selector)
-            if element:
-                text = element.get_text(strip=True)
-                # Убираем пробелы и знаки валют
-                text = re.sub(r'[^\d]', '', text)
-                try:
-                    return float(text) / 100 if len(text) > 3 else float(text)
-                except:
-                    pass
-        
-        return None
-    
-    def _extract_description_from_html(self, soup: BeautifulSoup) -> str:
-        """Извлекает описание из HTML"""
-        desc_selectors = ['[class*="description"]', '[class*="Description"]', '[itemprop="description"]']
-        for selector in desc_selectors:
-            element = soup.select_one(selector)
-            if element:
-                return element.get_text(strip=True)
-        return ''
-    
-    def _extract_chars_from_html(self, soup: BeautifulSoup) -> Dict:
-        """Извлекает характеристики из HTML"""
-        chars = {}
-        char_selectors = ['[class*="characteristic"]', '[class*="Characteristic"]', '[class*="params"]']
-        
-        for selector in char_selectors:
-            container = soup.select_one(selector)
-            if container:
-                items = container.find_all(['li', 'div', 'tr'])
-                for item in items:
-                    text = item.get_text(strip=True)
-                    if ':' in text:
-                        key, value = text.split(':', 1)
-                        chars[key.strip()] = value.strip()
-                    elif '—' in text:
-                        key, value = text.split('—', 1)
-                        chars[key.strip()] = value.strip()
-        
-        return chars
-
-
-# Добавляем импорт asyncio
-import asyncio
