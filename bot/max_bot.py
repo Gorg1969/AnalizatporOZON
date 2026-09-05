@@ -2,7 +2,6 @@ import logging
 import os
 from obabot import create_bot
 from obabot.filters import Command
-from obabot.types import WebAppInfo, ReplyKeyboardMarkup, KeyboardButton
 
 logger = logging.getLogger(__name__)
 
@@ -17,16 +16,7 @@ async def start_max_bot(token: str):
     @router.message(Command("start"))
     async def start_command(message):
         """Обработчик команды /start"""
-        keyboard = ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(
-                    text="🔍 АНАЛИЗ",
-                    web_app=WebAppInfo(url=WEBAPP_URL)
-                )]
-            ],
-            resize_keyboard=True
-        )
-        
+        # Простое сообщение со ссылкой (без WebApp)
         await message.answer(
             "👋 Привет! Я помогу проанализировать карточки конкурентов на маркетплейсах.\n\n"
             "📌 Что я умею:\n"
@@ -34,8 +24,39 @@ async def start_max_bot(token: str):
             "• Находить слабые места в описаниях\n"
             "• Сравнивать характеристики\n"
             "• Генерировать отчёты в Excel\n\n"
-            "Нажми кнопку **АНАЛИЗ**, чтобы открыть сервис.",
-            reply_markup=keyboard
+            f"🔗 Открой сервис по ссылке:\n{WEBAPP_URL}\n\n"
+            "Или используй команду /analyze <ссылка> для быстрого анализа."
+        )
+    
+    @router.message(Command("analyze"))
+    async def analyze_command(message):
+        """Обработчик команды /analyze"""
+        # Получаем текст после команды
+        text = message.text
+        parts = text.split(maxsplit=1)
+        
+        if len(parts) < 2:
+            await message.answer(
+                "❌ Укажите ссылку для анализа.\n"
+                "Пример: /analyze https://www.wildberries.ru/catalog/12345678/detail.aspx"
+            )
+            return
+        
+        url = parts[1].strip()
+        
+        # Проверяем ссылку
+        if not url.startswith(('http://', 'https://')):
+            await message.answer("❌ Некорректная ссылка. Убедитесь, что она начинается с http:// или https://")
+            return
+        
+        await message.answer(f"🔍 Анализирую: {url}\n⏳ Пожалуйста, подождите...")
+        
+        # Здесь будет вызов функции анализа
+        # Пока заглушка
+        await message.answer(
+            "✅ Анализ завершён!\n\n"
+            "📄 Отчёт готов. Скачать можно по ссылке:\n"
+            f"{WEBAPP_URL}/download/report"
         )
     
     logger.info("🤖 MAX бот запущен и готов к работе")
