@@ -1,6 +1,7 @@
 import logging
 import os
 import aiohttp
+import asyncio
 from obabot import create_bot
 from obabot.filters import Command
 
@@ -73,9 +74,25 @@ async def start_max_bot(token: str):
                 response = f"📊 **Результат анализа**\n\n"
                 response += f"📌 **Название:** {result.get('name', 'Не указано')}\n"
                 response += f"🏷️ **Бренд:** {result.get('brand', 'Не указан')}\n"
-                response += f"💰 **Цена:** {result.get('price', 'Не указана')} ₽\n"
-                response += f"⭐ **Рейтинг:** {result.get('rating', 'Нет')}\n"
-                response += f"💬 **Отзывов:** {result.get('reviews_count', 'Нет')}\n"
+                
+                price = result.get('price')
+                if price:
+                    response += f"💰 **Цена:** {price} ₽\n"
+                else:
+                    response += f"💰 **Цена:** Не указана\n"
+                
+                rating = result.get('rating', 0)
+                if rating > 0:
+                    response += f"⭐ **Рейтинг:** {rating}/5\n"
+                else:
+                    response += f"⭐ **Рейтинг:** Нет\n"
+                
+                reviews = result.get('reviews_count', 0)
+                if reviews > 0:
+                    response += f"💬 **Отзывов:** {reviews}\n"
+                else:
+                    response += f"💬 **Отзывов:** Нет\n"
+                
                 response += f"📱 **Платформа:** {result.get('platform', 'Неизвестно')}\n\n"
                 
                 # Добавляем описание (сокращённо)
@@ -83,7 +100,7 @@ async def start_max_bot(token: str):
                 if desc:
                     if len(desc) > 300:
                         desc = desc[:300] + '...'
-                    response += f"📝 **Описание:** {desc}\n\n"
+                    response += f"📝 **Описание:**\n{desc}\n\n"
                 
                 # Добавляем характеристики
                 chars = result.get('characteristics', {})
@@ -101,7 +118,7 @@ async def start_max_bot(token: str):
                 
         except Exception as e:
             logger.error(f"Ошибка при анализе: {e}")
-            await message.answer(f"❌ Произошла ошибка при анализе: {str(e)}")
+            await message.answer(f"❌ Произошла ошибка: {str(e)}\n\nПожалуйста, попробуйте другую ссылку или повторите позже.")
     
     logger.info("🤖 MAX бот запущен и готов к работе")
     await dp.start_polling(bot)
