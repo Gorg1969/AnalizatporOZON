@@ -7,7 +7,7 @@ from .worker import TaskManager
 
 __all__ = [
     'SiteDetector',
-    'ReportGenerator', 
+    'ReportGenerator',
     'WildberriesParser',
     'OzonParser',
     'SecurityManager',
