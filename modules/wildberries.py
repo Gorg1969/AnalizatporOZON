@@ -41,14 +41,13 @@ class WildberriesParser:
                 
                 data = await response.json()
                 
-                # Извлекаем информацию о товаре
                 products = data.get('data', {}).get('products', [])
                 if not products:
                     return {'error': 'Товар не найден'}
                 
                 product = products[0]
                 
-                # Получаем описание (может быть в HTML)
+                # Получаем описание
                 description_html = product.get('description', '')
                 if description_html:
                     soup = BeautifulSoup(description_html, 'html.parser')
@@ -56,7 +55,7 @@ class WildberriesParser:
                 else:
                     description_text = ''
                 
-                # Получаем характеристики (если есть)
+                # Характеристики
                 characteristics = {}
                 if 'characteristics' in product:
                     for char in product.get('characteristics', []):
@@ -65,7 +64,7 @@ class WildberriesParser:
                         if name and value:
                             characteristics[name] = value
                 
-                # Извлекаем отзывы (через другой API)
+                # Отзывы
                 reviews_count = 0
                 try:
                     reviews_url = f"https://feedbacks.wb.ru/api/v1/feedbacks/summary?nmId={product_id}"
